@@ -1,0 +1,66 @@
+import numpy as np
+from scipy.stats import norm
+
+class FarmBatch:
+    def __init__(self, farm_id, num_pigs, current_mean_weight, age_weeks):
+        self.farm_id = farm_id
+        self.num_pigs = num_pigs
+        self.mean_weight = current_mean_weight
+        self.age_weeks = age_weeks
+        
+        # Asumimos una desviación estándar (sigma) basada en la variabilidad real
+        # Por ejemplo, el 10% del peso medio, o fija en 5-8kg
+        self.std_dev = 5.0 
+        
+        # Ganancia diaria de peso (kg/día). 
+        # Podrías hacerlo variar por granja para más realismo.
+        self.daily_growth_rate = 0.9 
+
+    def predict_weight(self, days_ahead):
+        """
+        Retorna la media de peso proyectada para dentro de X días.
+        """
+        future_mean = self.mean_weight + (self.daily_growth_rate * days_ahead)
+        return future_mean
+
+    def calculate_revenue_projection(self, days_ahead, price_per_kg=1.56):
+        """
+        Calcula el beneficio estimado si vendiéramos este lote en X días.
+        Tiene en cuenta las penalizaciones del documento.
+        """
+        future_mu = self.predict_weight(days_ahead)
+        
+        # Rangos definidos en el PDF[cite: 20, 21, 28, 29]:
+        # < 100 kg: Penalización 20%
+        # 100 - 105 kg: Penalización 15% (Asumido por hueco en reglas, o sin penalización si es laxo, pero el doc dice 105-115 ideal)
+        # 105 - 115 kg: Ideal (0% penalización)
+        # 115 - 120 kg: Penalización 15%
+        # > 120 kg: Penalización 20%
+        
+        # Usamos la Función de Distribución Acumulada (CDF) para ver % de cerdos en cada rango
+        prop_under_100 = norm.cdf(100, future_mu, self.std_dev)
+        prop_100_105 = norm.cdf(105, future_mu, self.std_dev) - prop_under_100
+        prop_ideal = norm.cdf(115, future_mu, self.std_dev) - norm.cdf(105, future_mu, self.std_dev)
+        prop_115_120 = norm.cdf(120, future_mu, self.std_dev) - norm.cdf(115, future_mu, self.std_dev)
+        prop_over_120 = 1.0 - norm.cdf(120, future_mu, self.std_dev)
+        
+        # Cálculo de ingresos con penalizaciones
+        # Revenue base = peso * precio
+        # Penalizaciones aplican sobre el precio o el total (el doc dice "penalización del X% en esa parte del envío") [cite: 20]
+        
+        total_revenue = 0
+        total_weight = future_mu * self.num_pigs # Peso total estimado
+        
+        # Ingreso por tramo (simplificado usando la media del lote, 
+        # para mayor precisión se usaría la integral de x*pdf(x), pero esto basta para hackathon)
+        
+        rev_ideal = (prop_ideal * total_weight) * price_per_kg * 1.0
+        rev_mid_pen = (prop_100_105 + prop_115_120) * total_weight * price_per_kg * (1 - 0.15)
+        rev_high_pen = (prop_under_100 + prop_over_120) * total_weight * price_per_kg * (1 - 0.20)
+        
+        return rev_ideal + rev_mid_pen + rev_high_pen
+
+    def advance_day(self):
+        """Avanza la simulación un día"""
+        self.mean_weight += self.daily_growth_rate
+        # Opcional: incrementar edad en semanas cada 7 días
